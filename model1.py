@@ -13,7 +13,7 @@ class AttnVGG_before(nn.Module):
         super(AttnVGG_before, self).__init__()
         self.attention = attention
         # conv blocks
-        self.conv_block1 = ConvBlock(3, 64, 2)
+        self.conv_block1 = ConvBlock(1, 64, 2)
         self.conv_block2 = ConvBlock(64, 128, 2)
         self.conv_block3 = ConvBlock(128, 256, 3)
         self.conv_block4 = ConvBlock(256, 512, 3)
