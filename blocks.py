@@ -3,13 +3,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_features, out_features, num_conv, pool=False):
+    def __init__(self, in_features, out_features, num_conv, pool=False, dropout=0.0):
         super(ConvBlock, self).__init__()
         features = [in_features] + [out_features for i in range(num_conv)]
         layers = []
-        for i in range(len(features)-1):
-            layers.append(nn.Conv2d(in_channels=features[i], out_channels=features[i+1], kernel_size=3, padding=1, bias=True))
-            layers.append(nn.BatchNorm2d(num_features=features[i+1], affine=True, track_running_stats=True))
+        for i in range(len(features) - 1):
+            layers.append(
+                nn.Conv2d(in_channels=features[i], out_channels=features[i + 1], kernel_size=3, padding=1, bias=True))
+            layers.append(nn.BatchNorm2d(num_features=features[i + 1], affine=True, track_running_stats=True))
+            layers.append(nn.Dropout(dropout))
             layers.append(nn.ReLU())
             if pool:
                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))

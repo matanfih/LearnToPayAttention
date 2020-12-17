@@ -7,6 +7,11 @@ import torch.nn.functional as F
 import torchvision.utils as utils
 import torchvision.transforms as transforms
 
+
+def _worker_init_fn_(worker_id):
+    np.random.seed(np.random.get_state()[1][0] + worker_id)
+
+
 def visualize_attn_softmax(I, c, up_factor, nrow):
     # image
     img = I.permute((1,2,0)).cpu().numpy()
@@ -95,7 +100,7 @@ if __name__ == "__main__":
     from statistics import mean
     import glob
     root = "/data/matan/nih"
-    #pace = os.path.join(root, "pacemakers/00028060_001.png")
+    #pace = os.path.join(nih, "pacemakers/00028060_001.png")
     #per_img_local_center(pace)
     #print("std:")
     _transform = transforms.Compose([transforms.Resize(128), transforms.ToTensor()])
