@@ -20,14 +20,14 @@ from model2 import AttnVGG_after
 from utilities import *
 from utilities import _worker_init_fn_
 
-from nih_dataset import XRAY,PacemakerDataset
+from nih_dataset import XRAY, PacemakerDataset
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "4,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-_PACEMAKER = True
+_PACEMAKER = False
 _XRAY = not _PACEMAKER
 _CIFAR = not _XRAY and not _PACEMAKER
 
@@ -96,11 +96,18 @@ def main():
         criterion = nn.CrossEntropyLoss()
     elif _XRAY or _PACEMAKER:
         if _XRAY:
+            def top(_top):
+                return 'data/Data_Entry_2017_v2020_Top{0}.csv'.format(_top)
+            top_3_csv = 'data/Data_Entry_2017_v2020_Top3.csv'
+            top_5_csv = top(5)
+            complete_csv = 'data/Data_Entry_2017_v2020.csv'
+
             parser = argparse.ArgumentParser(description="LearnToPayAttn-XRAY")
-            opt = argparse.Namespace(attn_mode='before', batch_size=8, epochs=50, log_images=True, lr=1e-3,
-                                     no_attention=False, base_feature_size=16, image_size=128,
-                                     momentum=0.9, weight_decay=1e-3, dropout=0.15,
-                                     normalize_attn=True, outf=d_logs, pre_train=True)
+            opt = argparse.Namespace(attn_mode='before', batch_size=8, epochs=300, log_images=True, lr=8e-3,
+                                     slow_lr=True, no_attention=False, base_feature_size=16, image_size=128,
+                                     momentum=0.9, weight_decay=1e-3, dropout=0.20,
+                                     normalize_attn=True, outf=d_logs, pre_train=True, root='/data/matan/nih',
+                                     csv_path=top_5_csv)
         else:
             pre_train = True
             if pre_train:
@@ -142,7 +149,7 @@ def main():
         ])
 
         if _XRAY:
-            xray = XRAY(transform_train, transform_test, force_pre_process=False)
+            xray = XRAY(transform_train, transform_test, force_pre_process=False, csv_file=opt.csv_path)
             trainset = xray.train_set
             trainloader = torch.utils.data.DataLoader(trainset, batch_size=opt.batch_size, shuffle=True, num_workers=8,
                                                       worker_init_fn=_worker_init_fn_)
@@ -158,16 +165,16 @@ def main():
             testloader = torch.utils.data.DataLoader(testset, batch_size=opt.batch_size, shuffle=False, num_workers=5)
             class_to_index = trainset.class_to_index()
 
-        num_of_class = len(class_to_index.keys())
+        num_of_class = len(class_to_index.keys()) - 1
         device_ids = [0, 1]
-        # criterion = nn.BCEWithLogitsLoss()
-        criterion = nn.CrossEntropyLoss()
-
+        criterion = nn.BCELoss()
+        #criterion = nn.CrossEntropyLoss()
+        print("criterion = %s" % type(criterion))
     else:
         raise Exception("how da hell did you get here ????")
 
     print(opt)
-    print('done num_of_classes: %s , post crop size: %s' % (num_of_class, im_size))
+    print('done num_of_classes: %s [%s] , post crop size: %s' % (num_of_class, class_to_index, im_size))
 
     ## load network
     print('\nloading the network ...\n')
@@ -215,7 +222,7 @@ def main():
                 if os.path.exists(record['model']):
                     model_pre_trained = torch.load(record['model'])
 
-                print("found pre trained data: ", record)
+                print("found pre trained data: %s", record)
 
     if model_pre_trained is not None:
         model = nn.DataParallel(net, device_ids=device_ids)
@@ -236,6 +243,8 @@ def main():
         first_epoch = record['epoch']
         step = record['step']
 
+    slow_lr = opt.slow_lr if hasattr(opt, 'slow_lr') else False
+
     ### optimizer
     if _CIFAR:
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
@@ -243,7 +252,8 @@ def main():
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     elif _XRAY or _PACEMAKER:
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
-        lr_lambda = lambda epoch: np.power(0.5, int(epoch / 25))
+        rate = 25 if not slow_lr else 50
+        lr_lambda = lambda epoch: max(np.power(0.5, int(epoch / rate)), 4e-5)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
     # training
@@ -259,6 +269,7 @@ def main():
         writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
         print("\nepoch %d learning rate %f\n" % (epoch, optimizer.param_groups[0]['lr']))
         # run for one epoch
+
         for aug in range(num_aug):
             for i, data in enumerate(trainloader, 0):
                 inputs, labels = data
@@ -272,16 +283,26 @@ def main():
                 # forward
                 pred, __, __, __ = model(inputs)
                 # backward
+                #print(pred, labels)
                 loss = criterion(pred, labels)
                 loss.backward()
+                #print("post loss backward")
                 optimizer.step()
                 # display results
                 if i % 10 == 0:
                     model.eval()
                     pred, __, __, __ = model(inputs)
-                    predict = torch.argmax(pred, 1)
-                    # print("predict: ", predict.shape, "pred: ", pred.shape, "label: ", labels.shape, "input: ", inputs.shape)
-                    total = labels.size(0)
+                    #predict = torch.argmax(pred, 1)
+                    assert isinstance(criterion, nn.BCELoss) or isinstance(criterion, nn.CrossEntropyLoss)
+                    if isinstance(criterion, nn.BCELoss):
+                        predict = pred
+                        predict[predict > 0.5] = 1
+                        predict[predict <= 0.5] = 0
+                    elif isinstance(criterion, nn.CrossEntropyLoss):
+                        predict = torch.argmax(pred, 1)
+
+                    #print("predict: ", predict.shape, "pred: ", pred.shape, "label: ", labels.shape, "input: ", inputs.shape)
+                    total = labels.size(0) * labels.size(1)
                     correct = torch.eq(predict, labels).sum().double().item()
                     accuracy = correct / total
                     # print("accuracy:%s = correct:%s [pred:%s, predict:%s, labels:%s] / total:%s" % (accuracy, correct, pred, predict, labels, total))
@@ -315,8 +336,15 @@ def main():
                     images_test, labels_test = images_test.to(device), labels_test.to(device)
 
                     pred_test, __, __, __ = model(images_test)
-                    predict = torch.argmax(pred_test, 1)
-                    total += labels_test.size(0)
+                    assert isinstance(criterion, nn.BCELoss) or isinstance(criterion, nn.CrossEntropyLoss)
+                    if isinstance(criterion, nn.BCELoss):
+                        predict = pred_test
+                        predict[predict > 0.5] = 1
+                        predict[predict <= 0.5] = 0
+                    elif isinstance(criterion, nn.CrossEntropyLoss):
+                        predict = torch.argmax(pred_test, 1)
+
+                    total += labels_test.size(0) * labels_test.size(1)
                     correct += torch.eq(predict, labels_test).sum().double().item()
 
                 writer.add_scalar('test/accuracy', correct / total, epoch)
