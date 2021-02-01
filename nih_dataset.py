@@ -70,7 +70,7 @@ class XrayDataset(Dataset):
                 continue
             i = image_list.index(name)
             image_list[i] = img
-            print("images left: %s" % (self_len - index))
+            print("images left: %s" % (len(images) - index))
 
         self.class_to_idx = {}
         for l in labels:
@@ -96,8 +96,11 @@ class XrayDataset(Dataset):
         # else:
         if single_label is None:
             for k in self.class_to_idx.keys():
-                self.class_to_idx[k] = index
-                index += 1
+                if "No Finding" in k:
+                    self.class_to_idx[k] = 0
+                else:
+                    self.class_to_idx[k] = index
+                    index += 1
 
         print("label translation: %s" % self.class_to_idx)
 
@@ -122,16 +125,19 @@ class XrayDataset(Dataset):
         if not os.path.exists(root_dir):
             raise Exception("ohh snap!! nih directory not found [%s]" % root_dir)
 
-        self.orig_csv_path = os.path.join(root_dir, csv_file)
+        #self.orig_csv_path = os.path.join(root_dir, csv_file)
+        self.orig_csv_path = csv_file
+        csv_file_name, csv_dir = os.path.basename(self.orig_csv_path), os.path.dirname(self.orig_csv_path)
+
         self.single_label = single_label
         if single_label is None:
-            self.test_csv_fixed_path = os.path.join(root_dir, "{}{}".format(self.FIXED_TEST, csv_file))
-            self.train_csv_fixed_path = os.path.join(root_dir, "{}{}".format(self.FIXED_TRAIN, csv_file))
-            self.meta_json_path = os.path.join(root_dir, "meta.json")
+            self.test_csv_fixed_path = os.path.join(csv_dir, "{}{}".format(self.FIXED_TEST, csv_file_name))
+            self.train_csv_fixed_path = os.path.join(csv_dir, "{}{}".format(self.FIXED_TRAIN, csv_file_name))
+            self.meta_json_path = os.path.join(csv_dir, "meta.json")
         else:
-            self.test_csv_fixed_path = os.path.join(root_dir, "{}_{}{}".format(single_label, self.FIXED_TEST, csv_file))
-            self.train_csv_fixed_path = os.path.join(root_dir, "{}_{}{}".format(single_label, self.FIXED_TRAIN, csv_file))
-            self.meta_json_path = os.path.join(root_dir, "{}_meta.json".format(single_label, single_label))
+            self.test_csv_fixed_path = os.path.join(csv_dir, "{}_{}{}".format(single_label, self.FIXED_TEST, csv_file_name))
+            self.train_csv_fixed_path = os.path.join(csv_dir, "{}_{}{}".format(single_label, self.FIXED_TRAIN, csv_file_name))
+            self.meta_json_path = os.path.join(csv_dir, "{}_meta.json".format(single_label, single_label))
         self.root_dir = root_dir
 
         e = [d for d in (self.test_csv_fixed_path, self.train_csv_fixed_path, self.meta_json_path) if not os.path.exists(d)]
@@ -167,7 +173,24 @@ class XrayDataset(Dataset):
             else:
                 return torch.tensor(0, dtype=torch.long)
         else:
-            return torch.tensor(self.class_to_idx[s_target], dtype=torch.long)
+            if '|' in s_target:
+                #print("found multi label image [%s], taking first" % s_target)
+                s_target = s_target.split('|')
+                #assert len(s_target) > 3, s_target
+                labels = [self.class_to_idx[s_t] for s_t in s_target]
+            else:
+                labels = self.class_to_idx[s_target]
+
+            hot_labels = [0] * (len(self.class_to_idx) - 1)
+            if "No Finding" not in s_target:
+                try:
+                    for l in labels:
+                        hot_labels[int(l) -1] = 1
+                except:
+                    hot_labels[int(labels) - 1] = 1
+
+            return torch.tensor(hot_labels, dtype=torch.float)
+            #return torch.tensor(self.class_to_idx[s_target], dtype=torch.long)
 
     def __len__(self):
         return len(self.xray_frame)
@@ -313,13 +336,21 @@ class PacemakerDataset(Dataset):
 
 class XRAY(object):
     def __init__(self, train_image_transform, test_image_transform, force_pre_process=False,
-                 csv_file='Data_Entry_2017_v2020.csv', root_dir='/data/matan/nih'):
+                 csv_file=None, root_dir=None):
+        csv_file = 'Data_Entry_2017_v2020.csv' if csv_file is None else csv_file
+        root_dir = '/data/matan/nih' if root_dir is None else root_dir
 
-        self.train_set = XrayDataset(csv_file=csv_file, root_dir=root_dir, train=True,
-                                     transform=train_image_transform, force_pre_process=force_pre_process)
+        csv_path = csv_file if os.path.exists(csv_file) else os.path.join(root_dir, csv_file)
 
-        self.test_set = XrayDataset(csv_file=csv_file, root_dir=root_dir, train=False,
-                                    transform=test_image_transform)
+        assert os.path.exists(csv_path)
+
+        self.train_set = XrayDataset(csv_file=csv_path, root_dir=root_dir, train=True,
+                                     transform=train_image_transform, force_pre_process=force_pre_process,
+                                     single_label=None)
+
+        self.test_set = XrayDataset(csv_file=csv_path, root_dir=root_dir, train=False,
+                                    transform=test_image_transform,
+                                    single_label=None)
 
     def class_to_index(self, _class=None):
         if _class is None:
