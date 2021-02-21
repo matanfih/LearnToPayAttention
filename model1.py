@@ -77,6 +77,6 @@ class AttnVGG_before(nn.Module):
             g = self.dropout(g)
             # classification layer
             x = self.classify(torch.squeeze(g))
-        #return [x, c1, c2, c3]
+        return [x, c1, c2, c3]
 
-        return [torch.sigmoid(x), c1, c2, c3]
+        #return [torch.sigmoid(x), c1, c2, c3]

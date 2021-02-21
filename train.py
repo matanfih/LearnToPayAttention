@@ -15,6 +15,8 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torchvision
 import torchvision.utils as utils
 import torchvision.transforms as transforms
+
+import xray_loss
 from model1 import AttnVGG_before
 from model2 import AttnVGG_after
 from utilities import *
@@ -107,7 +109,7 @@ def main():
                                      slow_lr=True, no_attention=False, base_feature_size=16, image_size=128,
                                      momentum=0.9, weight_decay=1e-3, dropout=0.20,
                                      normalize_attn=True, outf=d_logs, pre_train=True, root='/data/matan/nih',
-                                     csv_path=top_5_csv)
+                                     csv_path=top_5_csv, loss='OVA')
         else:
             pre_train = True
             if pre_train:
@@ -167,8 +169,18 @@ def main():
 
         num_of_class = len(class_to_index.keys()) - 1
         device_ids = [0, 1]
-        criterion = nn.BCELoss()
-        #criterion = nn.CrossEntropyLoss()
+
+        if opt.loss == 'OVA':
+            criterion = xray_loss.OVALoss
+        elif opt.loss == 'OVA_N':
+            criterion = xray_loss.OVALoss_N
+        elif opt.loss == 'PAL':
+            criterion = xray_loss.PALLoss
+        elif opt.loss == 'PAL_N':
+            criterion = xray_loss.PALLoss_N
+        else:
+            criterion = nn.BCELoss()
+            #criterion = nn.CrossEntropyLoss()
         print("criterion = %s" % type(criterion))
     else:
         raise Exception("how da hell did you get here ????")
