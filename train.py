@@ -24,113 +24,72 @@ from utilities import _worker_init_fn_
 
 from nih_dataset import XRAY, PacemakerDataset
 
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+def argparser():
+    parser = argparse.ArgumentParser(description="learn ot pay attention and other vegetable")
 
-_PACEMAKER = False
-_XRAY = not _PACEMAKER
-_CIFAR = not _XRAY and not _PACEMAKER
+    parser.add_argument("-v", "--visualize", required=False, action='store', default=None)
 
-log_path = {
-    'CIFAR': 'CIFAR_logs',
-    'XRAY': 'logs',
-    'PACEMAKER': 'pacemaker_logs'
-}
+    parser.add_argument("--global_params", action='store', required=False, choices=list(xray_loss.Loss.losses.keys()) + ['BCE', 'CIFAR'],
+                        default='BCE', help="global configuration selection")
 
-if _CIFAR:
-    d_logs = log_path['CIFAR']
-elif _XRAY:
-    d_logs = log_path['XRAY']
-elif _PACEMAKER:
-    train_base_line = 'log_train_185_base_feature_16_drop015_stable0_72'
-    d_logs = log_path['PACEMAKER']
+    parser.add_argument("--CUDA_VISIBLE_DEVICES", action='store', required=False, default="2,4", help="cuda devices")
+    global_opt = parser.parse_args()
 
-for d in log_path.values():  # , d_train, d_test]:
-    if not os.path.exists(d):
-        os.mkdir(d)
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = global_opt.CUDA_VISIBLE_DEVICES
+
+    def top(_top):
+        return 'data/Data_Entry_2017_v2020_Top{0}.csv'.format(_top)
+
+    top_3_csv = 'data/Data_Entry_2017_v2020_Top3.csv'
+    top_5_csv = top(5)
+    complete_csv = 'data/Data_Entry_2017_v2020.csv'
+
+    if global_opt.global_params == 'BCE':
+        opt = argparse.Namespace(
+            global_param=global_opt.global_params,
+            attn_mode='before', batch_size=8, epochs=300, log_images=True, lr=8e-3,
+            slow_lr=True, no_attention=False, base_feature_size=16, image_size=128,
+            momentum=0.9, weight_decay=1e-3, dropout=0.20,
+            normalize_attn=True,
+            outf='logs_{}'.format(global_opt.global_params),
+            pre_train=True, root='/data/matan/nih',
+            csv_path=top_5_csv, loss=None)
+
+    elif global_opt.global_params in xray_loss.Loss.losses:
+        opt = argparse.Namespace(
+            global_param=global_opt.global_params,
+            attn_mode='before', batch_size=8, epochs=200, log_images=True, lr=1e-3,
+            slow_lr=True, no_attention=False, base_feature_size=16, image_size=128,
+            momentum=0.9, weight_decay=1e-3, dropout=0.20,
+            normalize_attn=True,
+            outf='logs_{}'.format(global_opt.global_params),
+            pre_train=True, root='/data/matan/nih',
+            csv_path=top_5_csv, loss=global_opt.global_params)
+
+    #elif opt.global_params == 'CIFAR':
+    # elif opt.global_params == 'PACEMAKER':
+    else:
+        raise Exception("{} not impl".format(global_opt.global_params))
+
+    assert global_opt.visualize is None or os.path.exists(global_opt.visualize), "test image [{}] was not found!".format(global_opt.visualize)
+
+    opt.test_image = global_opt.visualize
+    opt.test_only = bool(global_opt.visualize)
+
+    return opt
 
 def main():
     ## load data
     print('\nloading the dataset ...\n')
-    if _CIFAR:
-        parser = argparse.ArgumentParser(description="LearnToPayAttn-CIFAR100")
-        parser.add_argument("--batch_size", type=int, default=8, help="batch size")
-        parser.add_argument("--epochs", type=int, default=300, help="number of epochs")
-        parser.add_argument("--lr", type=float, default=0.1, help="initial learning rate")
-        parser.add_argument("--outf", type=str, default="logs", help='path of log files')
-        parser.add_argument("--attn_mode", type=str, default="after",
-                            help='insert attention modules before OR after maxpooling layers')
+    if False:  # TODO debug section, remove
+        pass
 
-        parser.add_argument("--normalize_attn", action='store_true',
-                            help='if True, attention map is normalized by softmax; otherwise use sigmoid')
-        parser.add_argument("--no_attention", action='store_true', help='turn down attention')
-        parser.add_argument("--log_images", action='store_true', help='log images and (is available) attention maps')
+    else:
+        opt = argparser()
+        print(opt)
 
-        parser.add_argument("--pre-train", action='store_true', help='use pre train model from outf path')
-
-        opt = parser.parse_args()
-        # CIFAR-100: 500 training images and 100 testing images per class
-        num_aug = 3
-        im_size = 32
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(im_size, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-        ])
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
-        ])
-
-        trainset = torchvision.datasets.CIFAR100(root='CIFAR100_data', train=True, download=True,
-                                                 transform=transform_train)
-        trainloader = torch.utils.data.DataLoader(trainset, batch_size=opt.batch_size, shuffle=True, num_workers=8,
-                                                  worker_init_fn=_worker_init_fn_)
-        testset = torchvision.datasets.CIFAR100(root='CIFAR100_data', train=False, download=True,
-                                                transform=transform_test)
-        testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=5)
-
-        num_of_class = 100
-        device_ids = [0, 1]
-        criterion = nn.CrossEntropyLoss()
-    elif _XRAY or _PACEMAKER:
-        if _XRAY:
-            def top(_top):
-                return 'data/Data_Entry_2017_v2020_Top{0}.csv'.format(_top)
-            top_3_csv = 'data/Data_Entry_2017_v2020_Top3.csv'
-            top_5_csv = top(5)
-            complete_csv = 'data/Data_Entry_2017_v2020.csv'
-
-            parser = argparse.ArgumentParser(description="LearnToPayAttn-XRAY")
-            opt = argparse.Namespace(attn_mode='before', batch_size=8, epochs=300, log_images=True, lr=8e-3,
-                                     slow_lr=True, no_attention=False, base_feature_size=16, image_size=128,
-                                     momentum=0.9, weight_decay=1e-3, dropout=0.20,
-                                     normalize_attn=True, outf=d_logs, pre_train=True, root='/data/matan/nih',
-                                     csv_path=top_5_csv, loss='OVA')
-        else:
-            pre_train = True
-            if pre_train:
-                chest_xray_pretrain_path = "/home/matan/pycharm_projects/xray/LearnToPayAttention/log_train_185_base_feature_16_drop015_stable0_72/net.pth"
-                print("setting arguments for PACEMAKER, assuming previous train was done")
-                parser = argparse.ArgumentParser(description="LearnToPayAttn-XRAY")
-                opt = argparse.Namespace(attn_mode='before', batch_size=8, epochs=100, log_images=True, lr=1e-4,
-                                         no_attention=False, base_feature_size=16, image_size=128,
-                                         momentum=0.9, weight_decay=1e-3, dropout=0.15,
-                                         normalize_attn=True, outf=d_logs, pre_train=True,
-                                         chest_xray_pretrain_path=chest_xray_pretrain_path)
-
-            else:
-                chest_xray_pretrain_path = 'gazim'
-                print("setting arguments for PACEMAKER, assuming previous train was done")
-                parser = argparse.ArgumentParser(description="LearnToPayAttn-XRAY")
-                opt = argparse.Namespace(attn_mode='before', batch_size=8, epochs=150, log_images=True, lr=1e-3,
-                                         no_attention=False, base_feature_size=16, image_size=128,
-                                         momentum=0.9, weight_decay=1e-3, dropout=0.15,
-                                         normalize_attn=True, outf=d_logs, pre_train=True,
-                                         chest_xray_pretrain_path=chest_xray_pretrain_path)
         num_aug = 1
         raw_size = 1024
         im_size = opt.image_size
@@ -150,7 +109,7 @@ def main():
             transforms.Normalize((0.5,), (0.185,))
         ])
 
-        if _XRAY:
+        if opt.global_param != 'CIFAR':
             xray = XRAY(transform_train, transform_test, force_pre_process=False, csv_file=opt.csv_path)
             trainset = xray.train_set
             trainloader = torch.utils.data.DataLoader(trainset, batch_size=opt.batch_size, shuffle=True, num_workers=8,
@@ -170,22 +129,14 @@ def main():
         num_of_class = len(class_to_index.keys()) - 1
         device_ids = [0, 1]
 
-        if opt.loss == 'OVA':
-            criterion = xray_loss.OVALoss
-        elif opt.loss == 'OVA_N':
-            criterion = xray_loss.OVALoss_N
-        elif opt.loss == 'PAL':
-            criterion = xray_loss.PALLoss
-        elif opt.loss == 'PAL_N':
-            criterion = xray_loss.PALLoss_N
+        if opt.loss is not None and isinstance(opt.loss, str):
+            criterion = xray_loss.Loss(opt.loss)
+
         else:
             criterion = nn.BCELoss()
             #criterion = nn.CrossEntropyLoss()
         print("criterion = %s" % type(criterion))
-    else:
-        raise Exception("how da hell did you get here ????")
 
-    print(opt)
     print('done num_of_classes: %s [%s] , post crop size: %s' % (num_of_class, class_to_index, im_size))
 
     ## load network
@@ -223,6 +174,9 @@ def main():
             if os.path.exists(opt.chest_xray_pretrain_path):
                 model_pre_trained = torch.load(opt.chest_xray_pretrain_path)
                 record = None
+            else:
+                assert opt.test_only is False, "cannot run test only mode without pre train data"
+
         except AttributeError:
             record_path = os.path.join(opt.outf, 'record')
             if os.path.exists(record_path):
@@ -246,6 +200,10 @@ def main():
     criterion.to(device)
     print('done')
 
+    if opt.test_only:
+        visual_test_image_softmax(model, opt.test_image, transform_test)
+        return
+
     if record is None:
         lr = opt.lr
         first_epoch = 0
@@ -258,14 +216,17 @@ def main():
     slow_lr = opt.slow_lr if hasattr(opt, 'slow_lr') else False
 
     ### optimizer
-    if _CIFAR:
+    if opt.global_param == 'CIFAR':
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         lr_lambda = lambda epoch: np.power(0.5, int(epoch / 25))
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-    elif _XRAY or _PACEMAKER:
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
+    else:
+        if opt.global_param == 'BCE':
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
+        else:
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=opt.weight_decay)
         rate = 25 if not slow_lr else 50
-        lr_lambda = lambda epoch: max(np.power(0.5, int(epoch / rate)), 4e-5)
+        lr_lambda = lambda epoch: max(np.power(0.5, int(epoch / rate)), 1e-4)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
     # training
@@ -291,29 +252,42 @@ def main():
                 model.zero_grad()
                 optimizer.zero_grad()
                 if (aug == 0) and (i == 0):  # archive images in order to save to logs
+                    print("input:", inputs.shape, "inputs[0:36, :, :, :] ->", inputs[0:36, :, :, :].shape)
                     images_disp.append(inputs[0:36, :, :, :])
+
                 # forward
                 pred, __, __, __ = model(inputs)
+
                 # backward
-                #print(pred, labels)
+                if isinstance(criterion, nn.BCELoss):
+                    pred = torch.sigmoid(pred)
+
                 loss = criterion(pred, labels)
+
+                #print("loss: %s, pred: %s, labels: %s" % (loss, pred, labels))
                 loss.backward()
                 #print("post loss backward")
+
                 optimizer.step()
                 # display results
                 if i % 10 == 0:
                     model.eval()
                     pred, __, __, __ = model(inputs)
-                    #predict = torch.argmax(pred, 1)
-                    assert isinstance(criterion, nn.BCELoss) or isinstance(criterion, nn.CrossEntropyLoss)
                     if isinstance(criterion, nn.BCELoss):
                         predict = pred
                         predict[predict > 0.5] = 1
                         predict[predict <= 0.5] = 0
                     elif isinstance(criterion, nn.CrossEntropyLoss):
                         predict = torch.argmax(pred, 1)
+                    elif isinstance(criterion, xray_loss.Loss):
+                        predict = torch.sigmoid(pred)
+                        predict[predict > 0.5] = 1
+                        predict[predict <= 0.5] = 0
+                    else:
+                        raise Exception("{} what is this?".format(criterion))
 
                     #print("predict: ", predict.shape, "pred: ", pred.shape, "label: ", labels.shape, "input: ", inputs.shape)
+                    #print("Train: predict: ", predict, "label: ", labels)
                     total = labels.size(0) * labels.size(1)
                     correct = torch.eq(predict, labels).sum().double().item()
                     accuracy = correct / total
@@ -342,27 +316,38 @@ def main():
         with torch.no_grad():
             # log scalars
             images_disp.append(inputs[0:36, :, :, :])
-            if not _PACEMAKER: # TODO not needed, remove if
+            if opt.global_param == 'PACEMAKER':  # TODO not needed, remove it
+                print("\n[epoch %d] log images for pacemaker" % epoch)
+            else:
                 for i, data in enumerate(testloader, 0):
                     images_test, labels_test = data
                     images_test, labels_test = images_test.to(device), labels_test.to(device)
 
                     pred_test, __, __, __ = model(images_test)
-                    assert isinstance(criterion, nn.BCELoss) or isinstance(criterion, nn.CrossEntropyLoss)
+
+                    pred_test = torch.sigmoid(pred_test)
+
+                    #print("Test prediction: %s" % pred_test)
+                    #assert not (isinstance(criterion, nn.BCELoss) or isinstance(criterion, nn.CrossEntropyLoss))
                     if isinstance(criterion, nn.BCELoss):
                         predict = pred_test
                         predict[predict > 0.5] = 1
                         predict[predict <= 0.5] = 0
                     elif isinstance(criterion, nn.CrossEntropyLoss):
                         predict = torch.argmax(pred_test, 1)
+                    elif isinstance(criterion, xray_loss.Loss):
+                        predict = pred_test
+                        predict[predict > 0.5] = 1
+                        predict[predict <= 0.5] = 0
+                    else:
+                        raise Exception("not sure how we reached here")
 
                     total += labels_test.size(0) * labels_test.size(1)
                     correct += torch.eq(predict, labels_test).sum().double().item()
 
                 writer.add_scalar('test/accuracy', correct / total, epoch)
                 print("\n[epoch %d] accuracy on test data: %.2f%%\n" % (epoch, 100 * correct / total))
-            else:
-                print("\n[epoch %d] log images for pacemaker" % epoch)
+
             # log images
             if opt.log_images:
                 print('\nlog images ...\n')

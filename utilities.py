@@ -1,3 +1,4 @@
+import PIL
 import numpy as np
 import os
 import cv2
@@ -29,6 +30,7 @@ def visualize_attn_softmax(I, c, up_factor, nrow):
     vis = 0.6 * img + 0.4 * attn
     return torch.from_numpy(vis).permute(2,0,1)
 
+
 def visualize_attn_sigmoid(I, c, up_factor, nrow):
     # image
     img = I.permute((1,2,0)).cpu().numpy()
@@ -44,6 +46,44 @@ def visualize_attn_sigmoid(I, c, up_factor, nrow):
     # add the heatmap to the image
     vis = 0.6 * img + 0.4 * attn
     return torch.from_numpy(vis).permute(2,0,1)
+
+
+def visual_test_image_softmax(model, image, transform_test, min_up_factor=1, outpath='/tmp'):
+    print("test image: %s, outpath: %s" % (image, outpath))
+
+    #p2t = transforms.PILToTensor()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    img = transform_test(PIL.Image.open(image).convert('L'))
+    img = img.float()
+
+    inputs = img
+
+    inputs = inputs.unsqueeze(1)
+    inputs = inputs.to(device)
+
+    pred, c1, c2, c3 = model(inputs)
+    inputs = inputs[:, 0, :, :]
+
+    attentions = [
+        (c1, 1, os.path.join(outpath, 'attn1_' + os.path.basename(image))),
+        (c2, 2, os.path.join(outpath, 'attn2_' + os.path.basename(image))),
+        (c3, 3, os.path.join(outpath, 'attn3_' + os.path.basename(image)))
+          ]
+
+    utils.save_image(inputs, os.path.join(outpath, 'orig_' + os.path.basename(image)))
+
+    if c1 is not None:
+        attn1 = visualize_attn_softmax(inputs, c1, up_factor=min_up_factor, nrow=6)
+        utils.save_image(attn1, os.path.join(outpath, 'attn1_' + os.path.basename(image)))
+    if c2 is not None:
+        attn2 = visualize_attn_softmax(inputs, c2, up_factor=min_up_factor * 2, nrow=6)
+        utils.save_image(attn2, os.path.join(outpath, 'attn2_' + os.path.basename(image)))
+    if c3 is not None:
+        attn3 = visualize_attn_softmax(inputs, c3, up_factor=min_up_factor * 4, nrow=6)
+        utils.save_image(attn3, os.path.join(outpath, 'attn3_' + os.path.basename(image)))
+
+    return
 
 
 def per_img_local_center(fimg):
